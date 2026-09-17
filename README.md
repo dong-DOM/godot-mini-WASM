@@ -68,19 +68,6 @@ func take_damage(amount):
 
 ## 运行示例
 
-三个完整小游戏（每个 ≤100 行）：
-
-- `examples/01-catch-game/` — 接水果（纯 JS）
-- `examples/02-snake/` — 贪吃蛇（**核心逻辑用 GDScript，JS 只负责引导**，混合开发验收标准）
-- `examples/03-scene-serialize/` — 场景 JSON 序列化往返演示
-
-静态服务即可运行（ESM 模块需要 http 协议，直接双击 html 不行）：
-
-```bash
-# 任意静态服务器，例如：
-python3 -m http.server 8080
-# 打开 http://localhost:8080/examples/02-snake/
-```
 
 ## 体积与性能亮点
 
