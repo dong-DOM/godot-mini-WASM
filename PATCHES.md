@@ -96,7 +96,7 @@
 13. **字典键顺序**：保持插入序（与上游一致）；`keys()` 按插入序返回。
 14. **异常 → JS**：C++ 侧 GDError 统一转成带 `(line N)` 的 JS Error；运行期脚本错误通过
     `console.error` + `engine.js.on('gdscript_error')` 事件上报，同一条错误只报一次（避免刷屏），不中断引擎循环。
-15. **文件布局**：本运行时全部源码位于开发仓库 `src/`（约 6,800 行 C++），非上游文件树；类/函数名遵循 Godot 命名习惯
+15. **文件布局**：本运行时全部源码位于开发仓库根目录；类/函数名遵循 Godot 命名习惯
     （Vector2、Sprite2D、queue_free、emit_signal…）以便零成本迁移心智模型。
 16. **加载器为单文件 ESM**：godot_mini.js 同时支持 `import { GEngine }`（ESM/打包器）与
     `globalThis.GEngine`（副作用导入）。纯 `<script src>`（非 module）加载不被支持——现代浏览器
