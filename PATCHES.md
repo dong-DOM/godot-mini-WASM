@@ -46,8 +46,8 @@
 | editor/ 整目录 | **删除** | editor/ | 不必要 | 编辑器 UI/检查器/导出对话框等 |
 | 3D 全链路 | **删除** | servers/rendering/renderer_rd/, scene/3d/ | 不必要 | 本轮仅 2D |
 | C# / mono | **删除** | modules/mono/ | 不必要 | |
-| 音频 | **删除** | servers/audio/ | 不必要 | 记录为 Phase 2 |
-| 物理 2D/3D | **删除** | servers/physics_* | 不必要 | 记录为 Phase 2 |
+| 音频 | **v0.2.0 以 JS facade 层实现** | servers/audio/ | 已支持 | WebAudio（play/music/tone/主音量），详见第 7 节；上游 AudioServer 总线/混音语义不保留 |
+| 物理 2D/3D | **v0.2.0 以 JS facade 层实现 2D 简化版** | servers/physics_* | 已支持 | 固定 60Hz/碰撞体/事件，详见第 7 节；无旋转/关节/连续碰撞，3D 仍不支持 |
 | UI 控件（Control 体系） | **删除** | scene/gui/ | 不必要 | 浏览器 DOM 承担 UI；记录为 Phase 2 |
 | 国际化 / 主题 / 插件 / 导出系统 | **删除** | core/config/project_settings, editor/export 等 | 不必要 | |
 | 桌面/移动平台层 | **删除** | platform/{windows,x11,macos,ios,android}/ | 不必要 | 仅参照 platform/web 的浏览器对接思路（由 JS 门面实现） |
@@ -65,8 +65,11 @@
 | 绑定 | Embind（emscripten/bind.h）。**无任何裸指针跨越 JS 边界**：节点以不透明数字句柄表示，纹理为元数据对象 |
 | 线程 | 单线程（未启用 pthreads） |
 | 文件系统 | 无（`-sFILESYSTEM=0`）。.gd 源码与图片均由 JS 侧以字符串/内存形式传入 |
-| 产物体积 | godot_mini.wasm：**359,585 B ≈ 351KB**（gzip 后 **123,872 B ≈ 121KB**）；godot_mini.js 82KB（gzip 22KB） |
-| 语言 / 标准 | C++17 |
+| 产物体积（v0.2.0 实测） | godot_mini.wasm：**427,232 B ≈ 417KB**（gzip 后 **147,227 B ≈ 144KB**）；godot_mini.js **109,812 B ≈ 107KB**（gzip 29KB，含 Canvas2D 渲染器、加载器与 v0.2.0 物理/音频/触控层） |
+| 语言 / 标准 | C++17（wasm 核心，v0.2.0 未改动）；v0.2.0 新增层为 ES2020 JavaScript |
+
+> 注：v0.1 文档记录的 wasm 体积为 351KB（359,585 B）；当前仓库中的 wasm 文件实测为 417KB，
+> v0.2.0 未重新编译 wasm，以仓库内实际文件为准如实修正记录。
 
 ---
 
@@ -108,3 +111,72 @@
 - 上游 Godot Engine：MIT License，Copyright (c) 2014-present Godot Engine contributors
   （Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur）。原始许可文本保留于 LICENSE-GODOT.txt。
 - 本运行时未复制上游源代码；本文件所述为"语义对照"与"架构参照"。
+
+---
+
+## 7. v0.2.0 新增层：物理 / 音频 / 触控（实现方式与偏差）
+
+v0.2.0 的三个新能力全部在 **JS facade 层**实现，**wasm 核心零改动**。
+选择该路径的原因：GDScript VM 与渲染命令流已在 wasm 内稳定；物理/音频/触控所需的
+浏览器能力（rAF、WebAudio、TouchEvent）天然存在于 JS 侧，无需跨越 wasm 边界；
+同时保持了零配置单文件加载与体积优势。
+
+### 7.1 简化版 2D 物理（`engine.physics`）
+
+**实现方式**：纯 JS 物理引擎，固定 60Hz 累积步进（与 wasm `_physics_process` 钩子的
+固定步进对齐，每帧最多补偿 5 步）。每步：读节点位置 → 积分（重力/阻尼/速度）→
+碰撞检测与响应 → 写回节点位置。物理体驱动的是标准节点属性，因此 **GDScript 的
+`_process` / `_physics_process` 读到的就是物理更新后的位置**，两个世界共享同一份状态。
+
+- 形状：轴对齐矩形（中心对齐，默认 32×32，与无纹理 Sprite2D 占位块一致）与圆形；
+  挂纹理时自动按纹理尺寸适配（显式给 size/radius 则不覆盖）。
+- 响应：位置修正 + 沿法线冲量；恢复系数取两者 `bounce` 的最大值；静态体视为无限质量。
+- 事件：进入/离开按碰撞对跟踪（`body_entered` / `body_exited` 语义），三条接收通道：
+  JS 回调（`body.onCollide(fn)` / `physics.onCollide(fn)`，参数为真实节点代理）、
+  Godot 信号（需在 GDScript 中 `signal body_entered(who_name)` 声明后 `connect`）。
+- **与上游的偏差（诚实清单）**：无旋转/角速度、无关节与约束、无连续碰撞检测（高速小物体
+  可能穿隧）、无碰撞层/掩码、无碰撞形状偏移（形状中心=节点位置）、恢复系数与摩擦模型
+  简化、无迭代求解器（多体堆叠稳定性有限）、`Area2D`/`CharacterBody2D`/`RayCast2D`
+  等上游节点不存在（用 `physics.body()`/`staticBody()` + 事件回调组合替代）。
+- **跨界约束（重要）**：本运行时 JS→wasm 只能传原始类型/数组/字典，节点对象跨界会挂起
+  （embind 转换限制，上游无此 API）。因此信号参数携带**伙伴节点名字符串**，GDScript 用
+  `get_node("../<名字>")` 解析（相对路径支持，绝对路径 `/root/...` 不支持）；JS 回调无此限制。
+- 参与物理的节点建议显式命名（`name: 'Ball1'`），自动名（`@Sprite2D@2`）在
+  get_node 解析与信号排查时不便。
+
+### 7.2 音频（`engine.audio`）
+
+**实现方式**：浏览器 WebAudio。`play`（音效，多实例并行）/ `music`（背景乐单通道，
+新曲自动替换旧曲）/ `tone`（振荡器合成，零音频资源）/ `stopAll` / `stopMusic` /
+`setMasterVolume`。音频源支持 URL（自动 fetch+decode+按 URL 缓存）与 ArrayBuffer。
+
+- 自动播放策略：浏览器要求用户手势后才能出声；facade 在首个 `pointerdown`/`keydown`
+  自动解锁，也可手动 `engine.audio.unlock()`。解锁前的 `play()` 调用安全（恢复后出声）。
+- `engine.pause()/resume()` 自动挂起/恢复 AudioContext（游戏暂停音效即停）。
+- GDScript 经全局桥接助手使用：`__gdmAudio.play(url, volume, loop)` / `__gdmAudio.tone(freq, dur, type, vol)`
+  / `__gdmAudio.music(url, vol)` / `__gdmAudio.stopAll()`（在 `JavaScriptBridge.eval` 中调用）。
+- **与上游的偏差**：上游 AudioServer 的总线（Master/Bus）、AudioStreamPlayer 节点体系、
+  `AudioStreamWAV/MP3` 资源、3D/2D 位置衰减（AudioListener2D）均不支持；
+  `tone` 为本项目补充的合成音效能力（上游无对应物）。
+
+### 7.3 手机触控（`engine.input`）
+
+**实现方式**：canvas 上监听 `touchstart/touchmove/touchend/touchcancel`（preventDefault +
+`touch-action:none`，阻断滚动/缩放与合成鼠标事件）。
+
+- **第一根手指映射为鼠标**：`mouse_button` + `mouse_motion` 事件照常进入 wasm 输入队列，
+  现有的 GDScript `_input`、`engine.input.mouse`、`isMouseButtonPressed` 在手机上零改动可用。
+- **多点触控**：全部手指实时跟踪于 `engine.input.touches`（`[{id, x, y}]`，CSS 像素）、
+  `touchCount`、`isTouchDown(id)`。坐标与鼠标事件一致为画布 CSS 像素（不经过相机变换，同偏差 6）。
+- **与上游的偏差**：上游 InputEventScreenTouch/ScreenDrag 独立事件体系不存在；
+  `_input` 收到的是映射后的鼠标事件（`type: "mouse_button"/"mouse_motion"`）。
+  手势识别（捏合/滑动）不内置——示例 02 展示了用 touches API 十行内自建。
+
+### 7.4 v0.2.0 其他改动
+
+- `loadScene()` 接受 JSON 字符串（此前仅接受 `saveScene()` 返回的对象）。
+- `queueFree()` 自动摘除节点上的物理体。
+- GDScript→JS 桥接助手：`__gdmAudio`（5 个方法）、`__gdmPhysics.impulse(node, ix, iy)` /
+  `__gdmPhysics.setGravity(x, y)`，挂在 `globalThis`，仅供 `JavaScriptBridge.eval` 使用。
+- 载入纹理后如节点挂有物理体且未显式指定形状尺寸，自动适配纹理尺寸。
+- 新增 `godot_mini.d.ts`（TypeScript 类型声明）。
